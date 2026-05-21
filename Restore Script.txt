@@ -1,0 +1,43 @@
+
+@echo off  :: Hides the command being run in the terminal for cleaner output
+setlocal    :: Ensures variables defined in the script don't affect the global environment
+
+:: Variables
+set "PCNAME=%COMPUTERNAME%"  ::Get the current PC's name Dynamically
+set "RESTOREFOLDER=%USERPROFILE%\Desktop\TESTRESTORE"  ::RESTOREFOLDER sets the folder where the files will be saved
+set "LOGFILE=%USERPROFILE%\Desktop\RestoreLog.txt"   :: LOGFILE Sets the path for the robocopy log
+
+:: Create restore folder
+if not exist "%RESTOREFOLDER%" mkdir "%RESTOREFOLDER%"
+
+:: Connect to network share
+echo Connecting to \\JUPITER...
+NET USE \\Server\IPC$ /u:Indra xxxx>nul 2>&1    :: This block of code will suppress any output, so the script can run quietly (hides both norml messages and errors from being displayed on the screen)
+if errorlevel 1 (
+    echo ERROR: Could not connect to \\JUPITER. Check credentials or network.
+    pause
+    exit /b
+)
+
+:: Check if backup folder exists on Jupiter (if not disconnects and exit with an error)
+if not exist "\\Server\PC-Backup\%PCNAME%\Desktop" (
+    echo ERROR: Backup folder not found: \\JUPITER\PC-Backup\%PCNAME%\Desktop
+    NET USE \\JUPITER\IPC$ /D >nul
+    pause
+    exit /b
+)
+
+:: Restore Desktop files
+echo Restoring Desktop...
+robocopy "\\Server\PC-Backup\%PCNAME%\Desktop" "%RESTOREFOLDER%\Desktop" /E /Z /MIR /XO /XA:H /W:5 /LOG+:"%LOGFILE%" /TEE
+
+:: Restore Documents files
+echo Restoring Documents...
+robocopy "\\Server\PC-Backup\%PCNAME%\Documents" "%RESTOREFOLDER%\Documents" /E /Z /MIR /XO /XA:H /W:5 /LOG+:"%LOGFILE%" /TEE
+
+:: Disconnect networks share, once it completes the restore from Jupiter
+NET USE \\Server\IPC$ /D >nul
+
+echo Restore complete! Files should be in: %RESTOREFOLDER%
+echo Log saved at: %LOGFILE%
+pause
