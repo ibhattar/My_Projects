@@ -1,0 +1,111 @@
+function checkAllTimesheets() {
+  const FOLDER_NAME = "YOUR PROJECT NAME UNDER GOOGLE TIMESHEETS";
+
+  const emails = {
+List out all the emails , where the timecard is sent too.
+  };
+
+  const folders = DriveApp.getFoldersByName(FOLDER_NAME);
+  if (!folders.hasNext()) {
+    Logger.log("Folder not found");
+    return;
+  }
+
+  const folder = folders.next();
+  const files = folder.getFilesByType("application/vnd.google-apps.spreadsheet");
+
+  while (files.hasNext()) {
+    const file = files.next();
+    const sheet = SpreadsheetApp.open(file).getActiveSheet();
+
+    const name = sheet.getRange("A1").getValue();
+    if (!name) {
+      Logger.log("Skipping file with no name: " + file.getName());
+      continue;
+    }
+
+    const nameParts = name.split(",");
+    const firstName = nameParts.length > 1 ? nameParts[1].trim() : name.trim();
+    const signature = sheet.getRange("I1").getValue();
+    const weekEnd = sheet.getRange("F3").getValue();
+    const weekEndDate = Utilities.formatDate(weekEnd, Session.getScriptTimeZone(), "MMMM dd, yyyy");
+
+    if (!signature || signature.toString().trim() === "") {
+      const email = emails[name];
+      if (email) {
+look for the Singature.
+     };
+
+        GmailApp.sendEmail(
+          email,
+          "ACTION REQUIRED: PLEASE SIGN YOUR TIMESHEET",
+          "",
+          {
+            from: "SenderEmailAddress",
+            name: "SUBJECT MESSAGE",
+            htmlBody: htmlBody
+          }
+        );
+
+        Logger.log(`Reminder sent to ${name}`);
+      } else {
+        Logger.log(`No email found for: ${name}`);
+      }
+    }
+  }
+}
+
+// ── Trigger entry points ──────────────────────────────────────────────────────
+
+/** Runs every Friday via a weekly time-based trigger */
+function weeklyFridayCheck() {
+  checkAllTimesheets();
+}
+
+/** Runs daily; only proceeds on the last day of the month */
+function endOfMonthCheck() {
+  if (isLastDayOfMonth()) {
+    Logger.log("End of month detected – running timesheet check.");
+    checkAllTimesheets();
+  }
+}
+
+// ── Helper ────────────────────────────────────────────────────────────────────
+
+function isLastDayOfMonth() {
+  const today    = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  // If tomorrow is the 1st, today is the last day of the month
+  return tomorrow.getDate() === 1;
+}
+
+// ── One-time setup: call this ONCE from the Apps Script editor ────────────────
+
+/**
+ * Creates two triggers:
+ *   1. weeklyFridayCheck  – every Friday
+ *   2. endOfMonthCheck    – daily (checks internally if it's the last day)
+ *
+ * Run setupTriggers() once manually. Delete any old triggers first to avoid duplicates.
+ */
+function setupTriggers() {
+  // Remove all existing triggers to avoid duplicates
+  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
+
+  // 1. Weekly – every Friday
+  ScriptApp.newTrigger("weeklyFridayCheck")
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.FRIDAY)
+    .atHour(9)          // 9 AM in the script's timezone
+    .create();
+
+  // 2. Daily – for end-of-month detection
+  ScriptApp.newTrigger("endOfMonthCheck")
+    .timeBased()
+    .everyDays(1)
+    .atHour(9)          // same time as Friday run
+    .create();
+
+  Logger.log("Triggers created successfully.");
+}
