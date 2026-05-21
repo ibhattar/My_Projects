@@ -1,0 +1,30 @@
+Backup your PC Script:
+#This script helps you backup the info from your local machine into a server, both within a same VPN.
+
+
+:: Get the current computer name
+set "PCNAME=%COMPUTERNAME%"    :: %COMPUTERNAME% get the PC name dynamically
+
+:: Connect to network share on Jupiter
+NET USE \\Server\IPC$ /u:INDRA "XXXXX"  ::Centralized backup credentials
+
+:: Backup Desktop
+robocopy "%USERPROFILE%\Desktop" "\\JUPITER\PC-Backup\%PCNAME%\Desktop" /E /Z /MIR /XO /XA:H /W:5 /LOG+:"C:\BackupLog.txt" /TEE
+:: %USERPROFILE% prompt to automatically targets the current user's directory
+
+:: Backup Documents
+::robocopy "%USERPROFILE%\Documents" "\\SERVER\PC-Backup\%PCNAME%\Documents" /E /Z /MIR /XO /XA:H /W:5 /LOG+:"C:\BackupLog.txt" /TEE
+
+:: Specify the absolute path
+::robocopy "C:\Users\INDRA\Documents" "\\SERVER\PC-Backup\%COMPUTERNAME%\Documents" ...
+
+:: Disconnect from network share
+NET USE \\SERVER\IPC$ /D
+
+:: /E means copy all sub folders
+:: /Z means restartable mode- if interrupted , it pickups where it left off
+:: /MIR means mirror the source to destination (add new files from the source)
+:: /XO  means exclude older files
+:: /XA:H -exclude files with hidden attribute
+:: /W:5 -retry /wait settings (Wait for 5 seconds between retries)
+:: /LOG+:"C:\BackupLog.txt" - logfiles 
