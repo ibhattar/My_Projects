@@ -1,0 +1,669 @@
+
+text/x-generic marketing.py ( Python script, UTF-8 Unicode text executable )
+"""
+Biweekly Marketing Email Automation
+-----------------------------------------
+Sends AI-generated promotional emails via cPanel SMTP.
+Includes a preview/approval workflow — Mikaya and Rebecca must both
+reply "ready to go" before the email goes out to customers.
+
+Cron setup (cPanel > Cron Jobs) — TWO jobs needed:
+  Job 1: Generate email + send for review (runs on send day at 9 AM)
+    0 9 */14 * * /usr/bin/python3 /home/supportteam/marketing.py --generate
+
+  Job 2: Check approvals + send to customers (runs 1 hour later at 10 AM)
+    0 10 */14 * * /usr/bin/python3 /home/supportteam/marketing.py --send
+
+Usage from command line:
+  python3 marketing.py --generate   # Step 1: Generate + send preview to reviewers
+  python3 marketing.py --send       # Step 2: Check approvals + send to customers
+  python3 marketing.py --status     # Check current approval status
+  python3 marketing.py --reset      # Clear approval state (manual override/cancel)
+"""
+
+import smtplib
+import imaplib
+import email
+import os
+import sys
+import json
+import logging
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from datetime import datetime, timedelta
+import urllib.request
+from typing import Optional
+
+# ─────────────────────────────────────────────
+# CONFIGURATION
+# ─────────────────────────────────────────────
+
+SMTP_HOST  = "XXXXXXXXX"
+SMTP_PORT  = 123
+SMTP_USER  = "Type the user email from where you want to send this email"
+SMTP_PASS  = "Password"
+
+FROM_NAME  = "Give a Unique Name"
+FROM_EMAIL = "User email Address"
+CC_EMAIL   = "User Email address"
+
+# IMAP — for reading approval replies
+IMAP_HOST  = "xxxxxxxx"
+IMAP_PORT  = 993
+
+ANTHROPIC_KEY = "Get a unique Key from Anthropic to generate the Unique Email Every Single Time"
+
+SURVEY_LINK = "Attach any google forms that you wanted to send it with the email."
+
+# ── Approval Reviewers ────────────────────────────────────────────────────────
+# Both must reply "ready to go" before the email sends to customers
+REVIEWERS = [
+    (Indra),
+    (ADAM),
+]
+
+# Approval keyword (case-insensitive) — reviewers reply with this phrase
+APPROVAL_KEYWORD = "ready to go"
+
+# How long (in hours) to wait for approval before timing out
+APPROVAL_TIMEOUT_HOURS = 2
+
+# ── State file — tracks pending approval between cron runs ───────────────────
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+STATE_FILE  = os.path.join(BASE_DIR, "approval_state.json")
+LOG_FILE    = os.path.join(BASE_DIR, "marketing_log.json")
+
+# ── Promo topic for Claude AI ─────────────────────────────────────────────────
+PROMO_TOPIC = (
+
+)
+
+EMAIL_TONE = "warm and professional, like a real person wrote it"
+
+# ─────────────────────────────────────────────
+# RECIPIENTS — deduplicated (fixed syntax errors from original)
+# ─────────────────────────────────────────────
+
+RECIPIENTS = [
+  ]
+
+# Deduplicate by email address (case-insensitive), keep first occurrence
+def deduplicate_recipients(recipients):
+    seen = set()
+    unique = []
+    for name, addr in recipients:
+        key = addr.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append((name.strip(), addr.strip()))
+    return unique
+
+RECIPIENTS = deduplicate_recipients(RECIPIENTS)
+
+# ─────────────────────────────────────────────
+# LOGGING SETUP
+# ─────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(BASE_DIR, "marketing.log"))
+    ]
+)
+log = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────
+# STATE MANAGEMENT
+# ─────────────────────────────────────────────
+
+def save_state(subject: str, body: str):
+    """Save generated email content + approval tracking to state file."""
+    state = {
+        "generated_at": datetime.now().isoformat(),
+        "subject":      subject,
+        "body":         body,
+        "approvals":    {},   # email → timestamp when they approved
+        "sent":         False
+    }
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+    log.info(f"State saved to {STATE_FILE}")
+
+def load_state() -> Optional[dict]:
+    """Load existing approval state. Returns None if no state file."""
+    if not os.path.exists(STATE_FILE):
+        return None
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        log.error(f"Failed to load state: {e}")
+        return None
+
+def clear_state():
+    """Remove the state file after successful send or timeout."""
+    if os.path.exists(STATE_FILE):
+        os.remove(STATE_FILE)
+        log.info("Approval state cleared.")
+
+def is_timed_out(state: dict) -> bool:
+    """Check if approval window has expired."""
+    generated_at = datetime.strptime(state["generated_at"][:19], "%Y-%m-%dT%H:%M:%S")
+    cutoff = generated_at + timedelta(hours=APPROVAL_TIMEOUT_HOURS)
+    return datetime.now() > cutoff
+
+# ─────────────────────────────────────────────
+# STEP 1 — GENERATE EMAIL BODY WITH CLAUDE AI
+# ─────────────────────────────────────────────
+
+def generate_email_content(topic: str, tone: str) -> dict:
+    """Call Claude API to generate a fresh subject and body."""
+
+    prompt = (XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    )
+
+    payload = json.dumps({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 1000,
+        "messages": [{"role": "user", "content": prompt}]
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_KEY,
+            "anthropic-version": "2023-06-01"
+        },
+        method="POST"
+    )
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    raw_text = "".join(block.get("text", "") for block in data.get("content", []))
+    clean    = raw_text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+    result   = json.loads(clean)
+
+    log.info(f"AI generated subject: {result.get('subject')}")
+    return result
+
+# ─────────────────────────────────────────────
+# STEP 2 — BUILD & SEND EMAIL
+# ─────────────────────────────────────────────
+
+def build_html_body(greeting: str, body: str, is_preview: bool = False) -> str:
+    """Build the branded HTML email body."""
+
+    html_paragraphs = "".join(
+        f'<p style="font-size: 15px; line-height: 1.8; margin: 0 0 16px 0;">{para.strip()}</p>'
+        for para in body.strip().split("\n\n") if para.strip()
+    )
+
+    preview_banner = ""
+    if is_preview:
+        preview_banner = """
+      XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+        """
+
+    return f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; max-width: 620px; margin: auto; padding: 24px; color: #333;">
+
+        {preview_banner}
+
+        <!-- Header -->
+     xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+            </div>
+        </div>
+
+        <!-- Personalized Greeting -->
+        <p style="font-size: 15px; line-height: 1.8; margin: 0 0 16px 0;">{greeting}</p>
+
+        <!-- AI Generated Body Paragraphs -->
+        {html_paragraphs}
+
+        <!-- Survey Button -->
+        <div style="text-align: center; margin: 32px 0;">
+            <a href="{SURVEY_LINK}"
+               style="background-color: #0000CD; color: #ffffff; padding: 12px 28px;
+                      text-decoration: none; border-radius: 6px; font-size: 15px;
+                      font-weight: bold; display: inline-block;">
+                &#128203; Share Your Feedback
+            </a>
+            <p style="font-size: 12px; color: #999; margin-top: 8px;">
+                We'd love to hear your thoughts — it only takes 2 minutes.
+            </p>
+        </div>
+
+        <hr style="border: 1px solid #ccc; margin: 8px 0;">
+
+        <!-- USDI Marketing Signature -->
+                </p>
+
+    </body>
+    </html>
+    """
+
+
+def send_email(subject: str, body: str, first_name: str, to_email: str,
+               is_preview: bool = False) -> bool:
+    """Build personalized branded email and send via SMTP SSL."""
+
+    greeting = f"Hi {first_name}," if first_name else "Hi,"
+
+    plain_text = f"""{greeting}
+
+{body}
+
+--
+We'd love to hear your thoughts — it only takes 2 minutes:
+USDI Customer Feedback Survey: {SURVEY_LINK}
+"""
+
+    if is_preview:
+        plain_text = (
+            "⚠️ PREVIEW — APPROVAL REQUIRED\n\n"
+            "Please review the email below and reply with \"ready to go\" to approve.\n"
+            "Both must approve before it sends to customers.\n\n"
+            "─────────────────────────────────────\n\n"
+        ) + plain_text
+
+    html_body = build_html_body(greeting, body, is_preview=is_preview)
+
+    msg = MIMEMultipart("alternative")
+
+    # For preview emails, flag the subject clearly
+    display_subject = f"[PREVIEW - APPROVAL NEEDED] {subject}" if is_preview else subject
+
+    msg["Subject"] = display_subject
+    msg["From"]    = f"{FROM_NAME} <{FROM_EMAIL}>"
+    msg["To"]      = to_email
+    msg["Cc"]      = CC_EMAIL
+
+    msg.attach(MIMEText(plain_text, "plain"))
+    msg.attach(MIMEText(html_body,  "html"))
+
+    try:
+        log.info(f"Connecting to {SMTP_HOST}:{SMTP_PORT} ...")
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(FROM_EMAIL, [to_email, CC_EMAIL], msg.as_string())
+        log.info(f"{'[PREVIEW] ' if is_preview else ''}Sent to {first_name} <{to_email}>")
+        return True
+
+    except smtplib.SMTPAuthenticationError:
+        log.error("Authentication failed — check SMTP_USER and SMTP_PASS.")
+        return False
+    except smtplib.SMTPConnectError:
+        log.error(f"Could not connect to {SMTP_HOST}:{SMTP_PORT}.")
+        return False
+    except Exception as e:
+        log.error(f"Unexpected error sending to {to_email}: {e}")
+        return False
+
+# ─────────────────────────────────────────────
+# STEP 3 — SEND PREVIEW TO REVIEWERS
+# ─────────────────────────────────────────────
+
+def send_preview_to_reviewers(subject: str, body: str):
+    """Send the preview email to Mikaya and Rebecca for approval."""
+    log.info("Sending preview to reviewers ...")
+    for name, addr in REVIEWERS:
+        ok = send_email(subject, body, name, addr, is_preview=True)
+        if ok:
+            log.info(f"Preview sent to {name} ({addr})")
+        else:
+            log.error(f"Failed to send preview to {name} ({addr})")
+
+# ─────────────────────────────────────────────
+# STEP 4 — CHECK INBOX FOR APPROVALS
+# ─────────────────────────────────────────────
+
+def check_approvals(state: dict) -> dict:
+    """
+    Scan inbox for approval replies from reviewers.
+    Returns updated approvals dict: { email: timestamp }
+    """
+    log.info("Checking inbox for approval replies ...")
+    approvals = state.get("approvals", {})
+    reviewer_emails = {addr.lower(): name for name, addr in REVIEWERS}
+
+    try:
+        with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT) as mail:
+            mail.login(SMTP_USER, SMTP_PASS)
+            mail.select("INBOX")
+
+            # Search all emails (read and unread) with "Re:" in subject
+            # covering both UNSEEN and SEEN in case of prior runs
+            _, msg_ids = mail.search(None, 'SUBJECT "Re:"')
+            ids = msg_ids[0].split()
+
+            if not ids:
+                log.info("No reply emails found in inbox.")
+                return approvals
+
+            log.info(f"Scanning {len(ids)} email(s) for approvals ...")
+
+            for num in ids:
+                _, msg_data = mail.fetch(num, "(RFC822)")
+                raw = msg_data[0][1]
+                msg_obj = email.message_from_bytes(raw)
+
+                sender_raw = msg_obj.get("From", "").lower()
+                subject_raw = msg_obj.get("Subject", "")
+
+                # Extract plain text body
+                body_text = ""
+                if msg_obj.is_multipart():
+                    for part in msg_obj.walk():
+                        if part.get_content_type() == "text/plain":
+                            body_text = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                            break
+                else:
+                    body_text = msg_obj.get_payload(decode=True).decode("utf-8", errors="ignore")
+
+                # Check if this reply is from one of our reviewers
+                matched_email = None
+                for reviewer_addr in reviewer_emails:
+                    if reviewer_addr in sender_raw:
+                        matched_email = reviewer_addr
+                        break
+
+                if not matched_email:
+                    continue  # Not from a reviewer
+
+                reviewer_name = reviewer_emails[matched_email]
+
+                # Check if the reply contains the approval keyword
+                if APPROVAL_KEYWORD.lower() in body_text.lower():
+                    if matched_email not in approvals:
+                        approvals[matched_email] = datetime.now().isoformat()
+                        log.info(f"✅ APPROVED by {reviewer_name} ({matched_email})")
+                    else:
+                        log.info(f"   (Already recorded approval from {reviewer_name})")
+                else:
+                    log.info(f"   Reply from {reviewer_name} found but does NOT contain '{APPROVAL_KEYWORD}'")
+                    log.info(f"   Body preview: {body_text[:200].strip()}")
+
+    except imaplib.IMAP4.error as e:
+        log.error(f"IMAP error: {e}")
+    except Exception as e:
+        log.error(f"Unexpected error checking approvals: {e}")
+
+    return approvals
+
+# ─────────────────────────────────────────────
+# STEP 5 — SEND TO ALL CUSTOMERS
+# ─────────────────────────────────────────────
+
+def send_to_all_customers(subject: str, body: str):
+    """Send the approved email to the full customer list."""
+    log.info(f"Sending approved email to {len(RECIPIENTS)} recipients ...")
+    success_count = 0
+    fail_count    = 0
+
+    for first_name, addr in RECIPIENTS:
+        ok = send_email(subject, body, first_name, addr)
+        if ok:
+            success_count += 1
+        else:
+            fail_count += 1
+
+    write_log(subject, success_count, fail_count)
+    log.info(f"=== Done: {success_count} sent, {fail_count} failed ===")
+    return success_count, fail_count
+
+# ─────────────────────────────────────────────
+# STEP 6 — LOG THE SEND
+# ─────────────────────────────────────────────
+
+def write_log(subject: str, success_count: int, fail_count: int):
+    record = {
+        "timestamp":   datetime.now().isoformat(),
+        "subject":     subject,
+        "sent":        success_count,
+        "failed":      fail_count,
+        "total":       success_count + fail_count,
+    }
+    existing = []
+    if os.path.exists(LOG_FILE):
+        try:
+            with open(LOG_FILE, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    existing.append(record)
+    with open(LOG_FILE, "w") as f:
+        json.dump(existing, f, indent=2)
+    log.info(f"Log saved to {LOG_FILE}")
+
+# ─────────────────────────────────────────────
+# NOTIFY REVIEWERS OF SEND RESULT
+# ─────────────────────────────────────────────
+
+def notify_reviewers_sent(subject: str, success_count: int, fail_count: int):
+    """Send a confirmation email to reviewers once the blast has gone out."""
+    notify_subject = f"✅ USDI Email Sent: {subject}"
+    notify_body = (
+        f"The marketing email has been approved and sent successfully.\n\n"
+        f"Subject : {subject}\n"
+        f"Sent    : {success_count} recipients\n"
+        f"Failed  : {fail_count} recipients\n"
+        f"Time    : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    )
+    for name, addr in REVIEWERS:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = notify_subject
+        msg["From"]    = f"{FROM_NAME} <{FROM_EMAIL}>"
+        msg["To"]      = addr
+        msg.attach(MIMEText(notify_body, "plain"))
+        try:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(FROM_EMAIL, [addr], msg.as_string())
+            log.info(f"Send confirmation emailed to {name} ({addr})")
+        except Exception as e:
+            log.error(f"Failed to notify {name}: {e}")
+
+def notify_reviewers_timeout():
+    """Alert reviewers that the approval window expired."""
+    notify_subject = "⏰ USDI Email NOT Sent — Approval Timed Out"
+    notify_body = (
+        f"The marketing email approval window ({APPROVAL_TIMEOUT_HOURS} hours) expired "
+        f"without both reviewers approving.\n\n"
+        f"The email has NOT been sent to customers.\n\n"
+        f"To resend: run python3 marketing.py --generate to start a new cycle.\n"
+    )
+    for name, addr in REVIEWERS:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = notify_subject
+        msg["From"]    = f"{FROM_NAME} <{FROM_EMAIL}>"
+        msg["To"]      = addr
+        msg.attach(MIMEText(notify_body, "plain"))
+        try:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(FROM_EMAIL, [addr], msg.as_string())
+            log.info(f"Timeout alert sent to {name} ({addr})")
+        except Exception as e:
+            log.error(f"Failed to notify {name}: {e}")
+
+# ─────────────────────────────────────────────
+# MAIN ENTRYPOINTS
+# ─────────────────────────────────────────────
+
+def run_generate():
+    """
+    Step 1 — Called by the first cron job.
+    Generates email content and sends preview to reviewers.
+    """
+    log.info("=== USDI Marketing — GENERATE & PREVIEW ===")
+    log.info(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # If there's already a pending approval, don't regenerate
+    existing = load_state()
+    if existing and not existing.get("sent", False):
+        if not is_timed_out(existing):
+            log.warning("An approval is already pending. Skipping generation.")
+            log.warning(f"State file: {STATE_FILE}")
+            log.warning("Run --status to check, or --reset to cancel and restart.")
+            return
+
+    if not ANTHROPIC_KEY.startswith("sk-ant-"):
+        log.error("Anthropic API key missing or invalid. Exiting.")
+        exit(1)
+
+    log.info("Generating email content via Claude AI ...")
+    try:
+        content = generate_email_content(PROMO_TOPIC, EMAIL_TONE)
+        subject = content.get("subject", "A quick update from USDI")
+        body    = content.get("body", "")
+    except Exception as e:
+        log.error(f"AI generation failed: {e}")
+        exit(1)
+
+    log.info(f"Generated subject: \"{subject}\"")
+
+    # Save state for the approval checker
+    save_state(subject, body)
+
+    # Send preview to Mikaya and Rebecca
+    send_preview_to_reviewers(subject, body)
+
+    reviewer_names = " and ".join(name for name, _ in REVIEWERS)
+    log.info(f"Preview sent to {reviewer_names}.")
+    log.info(f"Waiting for both to reply with '{APPROVAL_KEYWORD}'.")
+    log.info(f"Approval window: {APPROVAL_TIMEOUT_HOURS} hours.")
+    log.info("The --send job will check for approvals and send to customers.")
+
+
+def run_send():
+    """
+    Step 2 — Called by the second cron job (~1 hour later).
+    Checks for approvals and sends to customers if both approved.
+    """
+    log.info("=== USDI Marketing — APPROVAL CHECK & SEND ===")
+    log.info(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    state = load_state()
+
+    if not state:
+        log.info("No pending approval state found. Nothing to do.")
+        return
+
+    if state.get("sent", False):
+        log.info("Email was already sent in a previous run. Nothing to do.")
+        return
+
+    subject = state["subject"]
+    body    = state["body"]
+
+    # Check for timeout
+    if is_timed_out(state):
+        log.warning(f"Approval window of {APPROVAL_TIMEOUT_HOURS}h has expired.")
+        log.warning("Email NOT sent to customers.")
+        notify_reviewers_timeout()
+        clear_state()
+        return
+
+    # Check inbox for approval replies
+    approvals = check_approvals(state)
+
+    # Update state with latest approvals
+    state["approvals"] = approvals
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+    # Check if all reviewers have approved
+    reviewer_emails = [addr.lower() for _, addr in REVIEWERS]
+    approved_emails = list(approvals.keys())
+    pending = [addr for addr in reviewer_emails if addr not in approved_emails]
+
+    log.info(f"Approvals received : {len(approved_emails)}/{len(reviewer_emails)}")
+    for name, addr in REVIEWERS:
+        status = "✅ Approved" if addr.lower() in approved_emails else "⏳ Pending"
+        log.info(f"  {name} ({addr}): {status}")
+
+    if pending:
+        log.info(f"Still waiting for approval from: {', '.join(pending)}")
+        log.info("Email NOT sent yet — will check again on next cron run.")
+        return
+
+    # All reviewers approved — send to customers
+    log.info("✅ All reviewers approved! Sending to all customers ...")
+    success_count, fail_count = send_to_all_customers(subject, body)
+
+    # Mark as sent in state
+    state["sent"] = True
+    state["sent_at"] = datetime.now().isoformat()
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+    # Notify reviewers of successful send
+    notify_reviewers_sent(subject, success_count, fail_count)
+
+    # Clean up state file
+    clear_state()
+
+
+def run_status():
+    """Print the current approval status to console."""
+    state = load_state()
+    if not state:
+        print("No pending approval state. Run --generate to start a new cycle.")
+        return
+
+    print(f"\n{'─'*50}")
+    print(f"  USDI Marketing — Approval Status")
+    print(f"{'─'*50}")
+    print(f"  Generated   : {state.get('generated_at', 'unknown')}")
+    print(f"  Subject     : {state.get('subject', 'unknown')}")
+    print(f"  Sent        : {state.get('sent', False)}")
+
+    generated_at = datetime.strptime(state["generated_at"][:19], "%Y-%m-%dT%H:%M:%S")
+    cutoff = generated_at + timedelta(hours=APPROVAL_TIMEOUT_HOURS)
+    remaining = cutoff - datetime.now()
+    if remaining.total_seconds() > 0:
+        mins = int(remaining.total_seconds() // 60)
+        print(f"  Time left   : {mins} minutes before timeout")
+    else:
+        print(f"  Time left   : EXPIRED")
+
+    print(f"\n  Reviewer Status:")
+    approvals = state.get("approvals", {})
+    for name, addr in REVIEWERS:
+        status = f"✅ Approved at {approvals[addr.lower()]}" if addr.lower() in approvals else "⏳ Pending"
+        print(f"    {name:10} ({addr}): {status}")
+
+    print(f"{'─'*50}\n")
+
+
+# ─────────────────────────────────────────────
+# ENTRY POINT
+# ─────────────────────────────────────────────
+
+if __name__ == "__main__":
+
+    arg = sys.argv[1] if len(sys.argv) > 1 else "--generate"
+
+    if arg == "--generate":
+        run_generate()
+
+    elif arg == "--send":
+        run_send()
+
+    elif arg == "--status":
+        run_status()
+
+    elif arg == "--reset":
+        clear_state()
+        print("Approval state cleared.")
+
+    else:
+        print(f"Unknown argument: {arg}")
+        print("Usage: python3 marketing.py [--generate | --send | --status | --reset]")
+        exit(1)
