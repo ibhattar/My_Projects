@@ -1,0 +1,5 @@
+
+1)  Design Student Management System
+
+
+using SpringBoot+DataJpa+Lombok+mysql+springWebMvc+Jquery+BookStrap+JSP
