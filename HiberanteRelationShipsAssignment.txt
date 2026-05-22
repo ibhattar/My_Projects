@@ -1,0 +1,34 @@
+
+1)  Design one-many  and many to one Example ?
+
+   Course        
+
+ cid  cname   cduration cfee
+
+
+
+ Student
+
+sid   sname    sadd  mobileNumber  email   cid
+
+
+
+ 2)   Design one-many  and many to one Example ?
+
+
+    Dept
+
+ dno    dname location
+
+
+
+
+  Employee
+
+
+eid  ename  eaddy    salary   dno
+
+
+
+
+  

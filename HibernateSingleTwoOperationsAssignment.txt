@@ -1,0 +1,7 @@
+Coding Challanges
+-----------------
+
+1) Create Customer class hving cid ,cname ,cname ,email,phonumber  Develop Hibernate application
+
+using Single row operations(insert,update,delete,retrive)
+
