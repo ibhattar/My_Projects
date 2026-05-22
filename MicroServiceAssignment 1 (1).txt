@@ -1,0 +1,29 @@
+
+
+  1)   ServiceRegistry
+
+
+   SpringBoot+EurekaServer+Web+DeveloperTools
+
+
+  2)  AddtionService
+
+ 
+     SpringBoot+DiscoveryClient+Web+DevloperTools
+
+    
+      add two numbers   result return 
+
+
+  3)  MultiplyService
+
+
+         SpringBoot+DiscoveryClient+Web+DevloperTools
+
+         perform multiplication operations
+
+        interact with AddtionService get the result perform multiply operations
+
+
+
+      
