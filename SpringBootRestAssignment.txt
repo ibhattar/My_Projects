@@ -1,0 +1,7 @@
+
+
+1)Develop Spring Boot Rest Application
+
+   Registration(create,update,delete,retrive) +Fogot Password( using username or email get the password) + Login(useing username and password check user exist or not)
+
+
