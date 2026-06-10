@@ -1,0 +1,10 @@
+Command prompt to run the script under cpanel.
+
+Firstly, if the python3 is not installed on the cpanel, please go ahead and install it .
+
+Secondly run these three commands ,
+python3 marketing.py --generate
+python3 marketing.py --send
+
+
+
